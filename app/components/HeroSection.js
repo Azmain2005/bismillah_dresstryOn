@@ -36,9 +36,10 @@ export default function HeroSection() {
   const [hasLoaded, setHasLoaded] = useState(false); 
   const [isHovered, setIsHovered] = useState(false); 
 
-  const nextImage = useCallback(() => {
-    setCurrentImageIndex((prevIndex) => (prevIndex + 1) % heroImages.length);
-  }, [heroImages.length]);
+const nextImage = useCallback(() => {
+  setCurrentImageIndex((prevIndex) => (prevIndex + 1) % heroImages.length);
+}, []);
+
   
   // Auto-scroll effect (paused on hover)
   useEffect(() => {

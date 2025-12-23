@@ -14,7 +14,7 @@ const CartItem = ({ item }) => {
           {/* In a real app, you would use an <img> tag here */}
           <div className="w-full h-full object-cover" style={{ backgroundColor: item.color === 'White' ? '#f0f0f0' : '#4a4a4a' }}>
             {/* Placeholder for image */}
-            <img src={item.image} alt={item.name} className="w-full h-full object-cover"/>
+            {/* <img src={item.image} alt={item.name} className="w-full h-full object-cover"/> */}
           </div>
         </div>
 

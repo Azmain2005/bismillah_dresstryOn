@@ -14,7 +14,7 @@ export default function App() {
       <Navbar />
       <HeroSection />
       <TopSellings />
-      <NewArrivals />
+      {/* <NewArrivals /> */}
       <Category />
       <Testiominals />
       <Footer />
