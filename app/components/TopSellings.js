@@ -1,37 +1,42 @@
 "use client";
-
-import { useEffect, useState, useRef } from "react";
-import { Upload, Loader2, X, Sparkles, CheckCircle2, AlertCircle, Wand2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+// Add ChevronRight and ShoppingBag to your lucide-react imports
+import { 
+  Upload, 
+  Loader2, 
+  X, 
+  Sparkles, 
+  CheckCircle2, 
+  AlertCircle, 
+  RefreshCw, 
+  ChevronRight,
+  ShoppingBag  
+} from "lucide-react";import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
-// IMPORTANT: NanoBanana cannot see 'localhost'. 
-// Use your Ngrok URL here for testing: e.g., "https://a1b2-c3d4.ngrok-free.app"
-const STRAPI_URL = "https://api.mynestbd.com";
+const STRAPI_URL = "https://api.mynestbd.com"; 
 const NANOBANANA_API_KEY = "b40a3407c9d6ab58131f225299174b1c";
 const NANOBANANA_ENDPOINT = "https://api.nanobananaapi.ai/api/v1/nanobanana/generate";
-const NANOBANANA_POLL_ENDPOINT = "https://api.nanobananaapi.ai/api/v1/nanobanana/detail";
+const NANOBANANA_POLL_ENDPOINT = "https://api.nanobananaapi.ai/api/v1/nanobanana/record-info";
 
 export default function TopSellings() {
-  const [userImage, setUserImage] = useState(null);
   const [userImagePreview, setUserImagePreview] = useState("");
   const [bedsheets, setBedsheets] = useState([]);
-  const [prompt, setPrompt] = useState("");
-  const [selectedDress, setSelectedDress] = useState(null); // This stores the ID
+  const [selectedDress, setSelectedDress] = useState(null);
   const [isFetchingBedsheets, setIsFetchingBedsheets] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState("");
+  const [countdown, setCountdown] = useState(0); 
   const [resultImage, setResultImage] = useState("");
   const [error, setError] = useState("");
 
-  const pollingInterval = useRef(null);
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // 1. Fetch Gallery from Strapi
+  // 1. Fetch Designs
   useEffect(() => {
     const fetchBedsheets = async () => {
-      setIsFetchingBedsheets(true);
       try {
         const res = await fetch(`${STRAPI_URL}/api/bedsheets?populate=*`);
         const json = await res.json();
@@ -39,266 +44,264 @@ export default function TopSellings() {
           const mapped = json.data.map((item) => {
             const attr = item.attributes || item;
             const photo = attr.bedsheetPhoto?.data?.attributes || attr.bedsheetPhoto;
-            const url = photo?.url || "";
             return {
               id: item.id,
               name: attr.title || "Untitled",
-              prompt: attr.prompt || "Replace the existing bedsheet with the pattern from the second image.", // ADD THIS LINE
-              image: url.startsWith("https") ? url : `${STRAPI_URL}${url}`,
+              prompt: attr.prompt || "Change the bedsheet design in the first image using the pattern from the second image. High quality, interior photography style.",
+              image: photo?.url.startsWith("http") ? photo.url : `${STRAPI_URL}${photo?.url}`,
             };
           });
           setBedsheets(mapped);
         }
-      } catch (err) {
-        console.error("Gallery fetch failed:", err);
-      } finally {
-        setIsFetchingBedsheets(false);
-      }
+      } catch (err) { console.error("Fetch Error:", err); }
+      finally { setIsFetchingBedsheets(false); }
     };
     fetchBedsheets();
   }, []);
 
-  const handleImageUpload = (file) => {
-    if (!file) return;
-    setUserImage(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setUserImagePreview(reader.result);
-    reader.readAsDataURL(file);
-  };
+  // 2. Mobile Upload Sync
+  useEffect(() => {
+    if (userImagePreview) return;
+    const interval = setInterval(async () => {
+      const savedQrCode = localStorage.getItem("qr_code");
+      if (!savedQrCode) return;
+      try {
+        const res = await fetch(`${STRAPI_URL}/api/user-photos?filters[customid][$eq]=${savedQrCode}&populate=*`);
+        const result = await res.json();
+        if (result.data?.[0]?.photo?.[0]) {
+          const url = result.data[0].photo[0].url;
+          setUserImagePreview(url.startsWith("http") ? url : `${STRAPI_URL}${url}`);
+          clearInterval(interval);
+        }
+      } catch (e) { console.log("Waiting for mobile upload..."); }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [userImagePreview]);
 
-// 2. The Core AI Logic
+  // 3. Main AI Visualization Logic
 const handleVisualize = async () => {
-  if (!userImage || !selectedDress) return;
+    if (!userImagePreview || !selectedDress) return;
+    setResultImage("");
+    setError("");
+    setIsModalOpen(true);
+    setIsLoading(true);
+    
+    try {
+      const chosenSheet = bedsheets.find(b => b.id === selectedDress);
+      setLoadingStage("Sending design to AI...");
 
-  setResultImage("");
-  setError("");
-  setIsModalOpen(true);
-  setIsLoading(true);
-  setLoadingStage("Uploading room to MyNest...");
+      // 1. Submit the Task
+      const nanoRes = await fetch(NANOBANANA_ENDPOINT, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json", 
+          "Authorization": `Bearer ${NANOBANANA_API_KEY}` 
+        },
+        body: JSON.stringify({
+          prompt: chosenSheet?.prompt,
+          imageUrls: [userImagePreview, chosenSheet?.image],
+          type: "IMAGETOIAMGE",
+          numImages: 1,
+          image_size: "1:1",
+          callBackUrl: "https://mynestbd.com/api/callback" 
+        })
+      });
+      
+      const nanoData = await nanoRes.json();
+      if (nanoData.code !== 200) throw new Error(nanoData.msg || "AI startup failed.");
+      
+      const taskId = nanoData.data.taskId;
+      let foundUrl = null;
+      let attempts = 0;
+      const maxAttempts = 20; // Will poll for up to 100 seconds (5s * 20)
 
-  try {
-    // 1. UPLOAD
-    const formData = new FormData();
-    formData.append("files", userImage);
-    const uploadRes = await fetch(`${STRAPI_URL}/api/upload`, { method: "POST", body: formData });
-    const uploadData = await uploadRes.json();
-    const bedPublicUrl = `${STRAPI_URL}${uploadData[0].url}`;
+      // 2. Smart Polling Loop
+      while (!foundUrl && attempts < maxAttempts) {
+        attempts++;
+        setLoadingStage(attempts < 5 ? "Analyzing your room..." : "Applying fabric textures...");
+        
+        // Wait 5 seconds between checks
+        for (let i = 5; i > 0; i--) {
+          setCountdown(i);
+          await sleep(1000);
+        }
 
-    const chosenSheet = bedsheets.find(b => b.id === selectedDress);
-    const sheetPublicUrl = chosenSheet?.image;
-
-    // 2. TRIGGER GENERATION
-    setLoadingStage("Waking up AI Engine...");
-    const nanoRes = await fetch(NANOBANANA_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${NANOBANANA_API_KEY}` },
-      body: JSON.stringify({
-        prompt: chosenSheet?.prompt,
-        imageUrls: [bedPublicUrl, sheetPublicUrl],
-        type: "IMAGETOIAMGE",
-        numImages: 1,
-        image_size: "1:1"
-      })
-    });
-
-    const nanoData = await nanoRes.json();
-    if (nanoData.code !== 200) throw new Error("AI startup failed.");
-    const taskId = nanoData.data.taskId;
-
-    // --- STEP 3: THE BEAUTIFUL COUNTDOWN & POLLING ---
-    let secondsLeft = 40; // Total countdown time
-    let finalUrl = null;
-
-    // Function to handle the visual countdown
-    const countdownInterval = setInterval(() => {
-      if (secondsLeft > 0) {
-        secondsLeft--;
-        setLoadingStage(`Stitching fabrics... ${secondsLeft}s`);
-      } else {
-        setLoadingStage("Final touches... almost there!");
-      }
-    }, 1000);
-
-    // Function to keep checking the API (Polling)
-    const checkStatus = async () => {
-      for (let i = 0; i < 20; i++) { // Max 20 checks
-        // Wait 4 seconds between checks
-        await new Promise(resolve => setTimeout(resolve, 4000));
-
-        const res = await fetch(`https://api.nanobananaapi.ai/api/v1/nanobanana/record-info?taskId=${taskId}`, {
+        const res = await fetch(`${NANOBANANA_POLL_ENDPOINT}?taskId=${taskId}`, {
           headers: { "Authorization": `Bearer ${NANOBANANA_API_KEY}` }
         });
         const statusData = await res.json();
-        
-        const foundUrl = statusData.data?.response?.resultImageUrl;
-        if (foundUrl && foundUrl.startsWith("http")) {
-          return foundUrl;
+
+        // LOGIC BASED ON YOUR PROVIDED JSON:
+        // Path: data -> response -> resultImageUrl
+        // Success indicator: data -> successFlag === 1
+        if (statusData.code === 200 && statusData.data) {
+          const successFlag = statusData.data.successFlag;
+          const resultUrl = statusData.data.response?.resultImageUrl;
+
+          if (successFlag === 1 && resultUrl) {
+            foundUrl = resultUrl;
+            break;
+          }
+          
+          // If errorCode exists and isn't null, something went wrong
+          if (statusData.data.errorCode) {
+            throw new Error(statusData.data.errorMessage || "AI generation failed.");
+          }
         }
       }
-      return null;
-    };
 
-    // Execute the check
-    finalUrl = await checkStatus();
-    
-    // Cleanup
-    clearInterval(countdownInterval);
+      if (!foundUrl) throw new Error("Taking longer than usual. Please check your internet or try again.");
 
-    if (finalUrl) {
-      setResultImage(finalUrl);
+      setResultImage(foundUrl);
       setIsLoading(false);
-    } else {
-      throw new Error("Taking longer than usual. Please try again.");
-    }
-
-  } catch (err) {
-    console.error("Workflow Error:", err);
-    setError(err.message);
-    setIsLoading(false);
-  }
-};
-const startPolling = (taskId) => {
-  setLoadingStage("AI is rendering your results... (usually 20-40s)");
-  let startTime = Date.now();
-
-  if (pollingInterval.current) clearInterval(pollingInterval.current);
-
-  pollingInterval.current = setInterval(async () => {
-    // 1. Safety Timeout: Stop after 3 minutes
-    if (Date.now() - startTime > 180000) {
-      clearInterval(pollingInterval.current);
-      setError("The AI is taking longer than usual. Please check back in a moment.");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      const res = await fetch(`${NANOBANANA_POLL_ENDPOINT}?taskId=${taskId}`, {
-        headers: { 
-          "Authorization": `Bearer ${NANOBANANA_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      });
-      
-      const result = await res.json();
-      console.log("NanoBanana Polling Response:", result);
-
-      // Matches the docs: code 200 means the API request worked
-      if (result.code === 200) {
-        // MATCHING YOUR DOCS: data.info.resultImageUrl
-        const finalUrl = result.data?.info?.resultImageUrl;
-         
-        if (finalUrl && finalUrl.startsWith("http")) {
-          console.log("Image Found!", finalUrl);
-          setResultImage(finalUrl);
-          setIsLoading(false);
-          clearInterval(pollingInterval.current);
-        } else {
-          // Still processing if URL is missing or empty
-          setLoadingStage("Stitching fabrics and lighting...");
-        }
-      } 
-      // Handle the specific error codes from your documentation (400, 500, 501)
-      else if ([400, 500, 501].includes(result.code)) {
-        throw new Error(result.msg || "AI generation failed.");
-      }
+      setCountdown(0);
     } catch (err) {
-      console.error("Polling Error:", err);
-      // Only stop if it's a confirmed error message from the API
-      if (err.message.includes("failed") || err.message.includes("policy")) {
-        clearInterval(pollingInterval.current);
-        setError(err.message);
-        setIsLoading(false);
-      }
+      console.error("Workflow Error:", err);
+      setError(err.message);
+      setIsLoading(false);
+      setCountdown(0);
     }
-  }, 8000); // 8 seconds is a good balance for NanoBanana
-};
+  };
 
-  useEffect(() => () => clearInterval(pollingInterval.current), []);
+return (
+    <div className="max-w-7xl mx-auto px-6 py-16 space-y-16 bg-white">
+      {/* Header Section */}
+      <div className="text-center max-w-2xl mx-auto space-y-4">
+        <h1 className="text-5xl font-serif text-slate-900 tracking-tight">Visualize Your Space</h1>
+        <p className="text-slate-500 text-lg">Upload your room photo and see our premium collections come to life instantly.</p>
+      </div>
 
-  return (
-    <div className="max-w-7xl mx-auto px-6 py-12 space-y-20 bg-white text-slate-900">
-      {/* Step 1: Upload UI */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-        <div
-          onClick={() => document.getElementById("file-upload").click()}
-          className={cn(
-            "rounded-[2.5rem] border-2 border-dashed border-slate-200 p-8 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 min-h-[400px]",
-            userImage && "border-solid border-green-200 bg-green-50/30"
-          )}
-        >
-          <input id="file-upload" type="file" accept="image/*" hidden onChange={(e) => handleImageUpload(e.target.files?.[0])} />
-          <Upload className="mb-4 text-slate-400" size={40} />
-          <p className="text-xl font-medium">Upload your room photo</p>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+        {/* Left: Interactive Preview (5 Cols) */}
+        <div className="lg:col-span-7 group relative">
+          <div className="aspect-[4/3] rounded-[3rem] bg-slate-50 border-8 border-slate-50 shadow-2xl overflow-hidden relative">
+            {userImagePreview ? (
+              <>
+                <img src={userImagePreview} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt="Room" />
+                <button onClick={() => setUserImagePreview("")} className="absolute top-6 right-6 p-3 bg-white/90 backdrop-blur-md rounded-full shadow-xl hover:bg-white transition-colors">
+                  <RefreshCw size={20} className="text-slate-700" />
+                </button>
+                <div className="absolute bottom-6 left-6 bg-white/90 backdrop-blur-md px-4 py-2 rounded-full text-xs font-bold tracking-widest uppercase text-slate-800 shadow-lg">Current Selection</div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full space-y-6 text-slate-400">
+                <div className="w-24 h-24 rounded-full bg-white flex items-center justify-center shadow-inner">
+                  <Upload size={32} className="text-blue-500" />
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-medium text-slate-600">Waiting for room photo</p>
+                  <p className="text-sm">Scan the QR code on your mobile to upload</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="rounded-[2.5rem] bg-slate-100 overflow-hidden flex items-center justify-center">
-          {userImagePreview ? (
-            <img src={userImagePreview} className="w-full h-full object-cover" alt="Preview" />
-          ) : (
-            <div className="text-slate-400 italic">No image uploaded</div>
-          )}
+        {/* Right: Design Grid (5 Cols) */}
+        <div className="lg:col-span-5 space-y-8">
+          <div className="flex items-center justify-between">
+            <h3 className="text-2xl font-serif text-slate-800">Select Collection</h3>
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-widest">{bedsheets.length} Designs</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 max-h-[550px] overflow-y-auto pr-4 custom-scrollbar">
+            {bedsheets.map((sheet) => (
+              <motion.div
+                key={sheet.id}
+                whileHover={{ y: -5 }}
+                onClick={() => setSelectedDress(sheet.id)}
+                className={cn(
+                  "group relative cursor-pointer rounded-3xl overflow-hidden border-2 transition-all duration-300",
+                  selectedDress === sheet.id ? "border-slate-900 ring-4 ring-slate-100" : "border-transparent bg-slate-50"
+                )}
+              >
+                <img src={sheet.image} className="aspect-square object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
+                <div className="p-4 bg-white/80 backdrop-blur-sm">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{sheet.name}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Premium Cotton</p>
+                </div>
+                {selectedDress === sheet.id && (
+                  <div className="absolute top-3 right-3 bg-slate-900 rounded-full p-1.5 shadow-lg">
+                    <CheckCircle2 className="text-white h-4 w-4" />
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </div>
+
+          <Button
+            disabled={!userImagePreview || !selectedDress || isLoading}
+            onClick={handleVisualize}
+            className="w-full h-20 rounded-[2rem] bg-slate-900 hover:bg-black text-white text-xl font-medium shadow-2xl transition-all disabled:bg-slate-200"
+          >
+            {isLoading ? <Loader2 className="animate-spin mr-3" /> : <Sparkles className="mr-3 text-amber-400" />}
+            Visualize on My Bed
+          </Button>
         </div>
       </div>
 
-      {/* Step 2: Selection Grid */}
-      <div className="space-y-10">
-        <h2 className="text-3xl font-serif border-b pb-4">Choose a Design</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          {isFetchingBedsheets ? <Loader2 className="animate-spin" /> : bedsheets.map((sheet) => (
-            <div
-              key={sheet.id}
-              onClick={() => setSelectedDress(sheet.id)}
-              className={cn(
-                "relative rounded-2xl overflow-hidden cursor-pointer transition-all",
-                selectedDress === sheet.id ? "ring-4 ring-black scale-95" : "hover:opacity-80"
-              )}
-            >
-              <img src={sheet.image} className="aspect-square object-cover" alt={sheet.name} />
-              <div className="p-3 bg-white border-t text-sm font-bold truncate">{sheet.name}</div>
-              {selectedDress === sheet.id && (
-                <div className="absolute top-2 right-2 bg-black rounded-full p-1"><CheckCircle2 className="text-white h-4 w-4" /></div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Step 3: Action Button */}
-      <div className="flex justify-center">
-        <Button
-          size="lg"
-          disabled={!userImage || !selectedDress || isLoading}
-          onClick={handleVisualize}
-          className="rounded-full px-12 py-8 bg-slate-950 text-white text-xl"
-        >
-          {isLoading ? <Loader2 className="animate-spin mr-2" /> : <Sparkles className="mr-2 text-amber-400" />}
-          Visualize on My Bed
-        </Button>
-      </div>
-
-      {/* Result Modal */}
+      {/* Modern Result Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <motion.div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-            <motion.div className="bg-white rounded-[2rem] overflow-hidden max-w-5xl w-full relative">
-              <button onClick={() => setIsModalOpen(false)} className="absolute top-6 right-6 z-10 p-2 bg-white rounded-full shadow-lg"><X size={24} /></button>
-              <div className="grid grid-cols-1 md:grid-cols-2">
-                <div className="aspect-square bg-slate-200 flex items-center justify-center">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xl flex items-center justify-center p-6">
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-white rounded-[3rem] shadow-[0_0_100px_rgba(0,0,0,0.2)] overflow-hidden max-w-6xl w-full relative border border-white/20">
+              <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 z-50 p-3 bg-white/50 backdrop-blur-md rounded-full hover:bg-white transition-all shadow-xl"><X size={24} /></button>
+              
+              <div className="grid grid-cols-1 lg:grid-cols-2">
+                <div className="aspect-square bg-slate-100 relative overflow-hidden flex items-center justify-center">
                   {isLoading ? (
-                    <div className="text-center space-y-4">
-                      <Loader2 className="animate-spin h-12 w-12 mx-auto" />
-                      <p className="font-serif italic animate-pulse">{loadingStage}</p>
+                    <div className="text-center space-y-8 p-12">
+                      <div className="relative inline-block">
+                        <svg className="w-32 h-32 transform -rotate-90">
+                          <circle cx="64" cy="64" r="60" stroke="currentColor" strokeWidth="4" fill="transparent" className="text-slate-200" />
+                          <circle cx="64" cy="64" r="60" stroke="currentColor" strokeWidth="4" fill="transparent" strokeDasharray={377} strokeDashoffset={377 - (377 * (5 - countdown)) / 5} className="text-slate-900 transition-all duration-1000" />
+                        </svg>
+                        <span className="absolute inset-0 flex items-center justify-center text-2xl font-bold">{countdown}s</span>
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="text-2xl font-serif italic text-slate-800">{loadingStage}</h4>
+                        <p className="text-slate-400 animate-pulse">Our AI is meticulously rendering your custom look...</p>
+                      </div>
                     </div>
                   ) : error ? (
-                    <div className="text-center text-red-500 p-8"><AlertCircle size={48} className="mx-auto mb-4" /><p>{error}</p></div>
+                    <div className="p-12 text-center">
+                      <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6"><AlertCircle size={40} className="text-red-500" /></div>
+                      <h4 className="text-xl font-bold text-slate-900 mb-2">Something went wrong</h4>
+                      <p className="text-slate-500 mb-6">{error}</p>
+                      <Button onClick={handleVisualize} variant="outline" className="rounded-full">Try Again</Button>
+                    </div>
                   ) : (
-                    <img src={resultImage} className="w-full h-full object-cover" alt="AI Result" />
+                    <motion.img initial={{ opacity: 0 }} animate={{ opacity: 1 }} src={resultImage} className="w-full h-full object-cover" alt="Result" />
                   )}
                 </div>
-                <div className="p-12 flex flex-col justify-center">
-                  <h3 className="text-4xl font-serif mb-4">Your New Sanctuary</h3>
-                  <Button className="w-full h-14 bg-black text-white rounded-xl text-lg">Order This Look</Button>
+
+                <div className="p-16 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center space-x-2 text-blue-600 mb-4">
+                      <Sparkles size={18} />
+                      <span className="text-xs font-bold uppercase tracking-widest">AI Masterpiece</span>
+                    </div>
+                    <h3 className="text-5xl font-serif text-slate-900 mb-6">A New Level of Comfort.</h3>
+                    <p className="text-lg text-slate-500 leading-relaxed mb-8">The chosen design harmonizes perfectly with your room's lighting and layout. Ready to make it yours?</p>
+                    
+                    <div className="space-y-4 mb-12">
+                      {['Premium Percale Weave', 'Natural Breathability', 'Fade-Resistant Colors'].map((item) => (
+                        <div key={item} className="flex items-center space-x-3 text-slate-700">
+                          <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center"><ChevronRight size={12} /></div>
+                          <span className="font-medium">{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-4">
+                    <Button className="flex-1 h-16 bg-slate-900 text-white rounded-2xl text-lg font-medium group hover:bg-black">
+                      <ShoppingBag className="mr-2 group-hover:scale-110 transition-transform" /> Add to Cart
+                    </Button>
+                    <Button variant="outline" className="h-16 w-16 rounded-2xl border-slate-200">
+                      <RefreshCw size={20} />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </motion.div>

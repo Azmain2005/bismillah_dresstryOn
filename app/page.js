@@ -13,7 +13,7 @@ export default function App() {
       <PromoBanner />
       <Navbar />
       <HeroSection />
-      <TopSellings />
+      {/* <TopSellings /> */}
       {/* <NewArrivals /> */}
       <Category />
       <Testiominals />
