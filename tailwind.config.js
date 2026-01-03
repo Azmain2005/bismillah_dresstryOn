@@ -54,7 +54,6 @@ module.exports = {
     },
   },
   plugins: [
-    require("tw-animate-css"),
     heroui(), // ✅ from @heroui/react
   ],
 };

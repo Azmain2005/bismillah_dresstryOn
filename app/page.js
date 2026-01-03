@@ -6,13 +6,17 @@ import NewArrivals from "./components/NewArrivals.js";
 import PromoBanner from "./components/topBar.js";
 import Category from "./components/Category.js";
 import Testiominals from "./components/Testiominals.js";
+import TechShowcase from "./components/TechShowcase.js";
+import EditorialShowcase from "./components/EditorialShowcase.js";
 
 export default function App() {
   return (
     <div className="bg-white">
-      <PromoBanner />
+      {/* <PromoBanner /> */}
       <Navbar />
       <HeroSection />
+      <TechShowcase />
+      <EditorialShowcase />
       {/* <TopSellings /> */}
       {/* <NewArrivals /> */}
       <Category />

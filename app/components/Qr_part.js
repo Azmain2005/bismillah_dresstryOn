@@ -26,7 +26,7 @@ export default function Qr_part() {
   };
 
   return (
-    <div className="max-w-md mx-auto overflow-hidden bg-white border border-slate-200 rounded-[2.5rem] shadow-2xl mt-10 mb-10">
+    <div className="max-w-md mx-auto overflow-hidden bg-white border border-slate-200 rounded-[2.5rem] shadow-2xl mt-30 mb-10">
       <div className="p-8 flex flex-col items-center text-center space-y-6">
         
         {/* Header Icon & Text */}

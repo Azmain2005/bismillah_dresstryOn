@@ -1,7 +1,7 @@
 import Footer from "../components/Footer";
 import Navbar from "../components/Navbar";
+import NewArrival from "../components/NewArrivals";
 import Qr_part from "../components/Qr_part";
-import PromoBanner from "../components/topBar";
 import TopSellings from "../components/TopSellings";
 
 export default function DemoPage() {
@@ -9,7 +9,7 @@ export default function DemoPage() {
     <div>
       <Navbar />
       <Qr_part />
-      <TopSellings />
+      <NewArrival />
 
       <Footer />
     </div>
